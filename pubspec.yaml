@@ -1,5 +1,5 @@
 name: kurippu_ai
-description: "A new Flutter project."
+description: "AI-powered meeting notes app with transcription and summaries."
 publish_to: 'none'
 version: 0.1.0
 
@@ -10,10 +10,41 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # State Management
+  flutter_riverpod: ^2.5.1
+
+  # Calendar
+  device_calendar: ^4.3.2
+  table_calendar: ^3.1.2
+
+  # Audio Recording & Playback
+  record: ^5.2.0
+  just_audio: ^0.9.40
+
+  # AI Services (Gemini)
+  google_generative_ai: ^0.4.6
+
+  # Local Storage (using Hive - no code generation needed)
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  path_provider: ^2.1.4
+  flutter_secure_storage: ^9.2.2
+
+  # Permissions
+  permission_handler: ^11.3.1
+
+  # Utilities
+  intl: ^0.19.0
+  uuid: ^4.5.1
+  go_router: ^14.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+dependency_overrides:
+  record_linux: ^1.0.0
 
 flutter:
   uses-material-design: true
