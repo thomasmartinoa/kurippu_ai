@@ -1,10 +1,13 @@
 import 'dart:convert';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../core/services/services.dart';
 import '../../data/models/models.dart';
 import 'service_providers.dart';
+
+const _uuid = Uuid();
 
 // ============ Meeting Providers ============
 
@@ -37,6 +40,7 @@ class MeetingsNotifier extends StateNotifier<AsyncValue<List<Meeting>>> {
 
     if (meeting == null) {
       meeting = Meeting()
+        ..id = _uuid.v4()  // Generate UUID before saving
         ..calendarEventId = event.id
         ..title = event.title
         ..description = event.description
@@ -45,8 +49,7 @@ class MeetingsNotifier extends StateNotifier<AsyncValue<List<Meeting>>> {
         ..location = event.location
         ..attendees = event.attendees;
 
-      final id = await _storageService.saveMeeting(meeting);
-      meeting.id = id;
+      await _storageService.saveMeeting(meeting);
     }
 
     await loadMeetings();
@@ -133,13 +136,15 @@ class RecordingStateNotifier extends StateNotifier<RecordingState> {
     );
 
     if (filePath != null) {
-      // Create recording entry
+      // Create recording entry with UUID
+      final recordingId = _uuid.v4();
       final recording = Recording()
+        ..id = recordingId
         ..meetingId = meetingId
         ..filePath = filePath
         ..status = RecordingStatus.recording;
 
-      final recordingId = await _storageService.saveRecording(recording);
+      await _storageService.saveRecording(recording);
 
       state = state.copyWith(
         isRecording: true,
@@ -230,8 +235,10 @@ class TranscriptProcessingNotifier
       // Process audio with Gemini
       final result = await _geminiService.processAudio(recording.filePath);
 
-      // Create transcript summary
+      // Create transcript summary with UUID
+      final transcriptId = _uuid.v4();
       final transcriptSummary = TranscriptSummary()
+        ..id = transcriptId
         ..recordingId = recording.id
         ..transcript = result.transcript
         ..keyPoints = jsonEncode(result.keyPoints)
@@ -240,12 +247,11 @@ class TranscriptProcessingNotifier
         ..summary = result.summary
         ..rawResponse = result.rawResponse;
 
-      final id = await _storageService.saveTranscriptSummary(transcriptSummary);
-      transcriptSummary.id = id;
+      await _storageService.saveTranscriptSummary(transcriptSummary);
 
       // Update recording with transcript link
       recording.status = RecordingStatus.completed;
-      recording.transcriptSummaryId = id;
+      recording.transcriptSummaryId = transcriptId;
       await _storageService.saveRecording(recording);
 
       state = AsyncValue.data(transcriptSummary);
