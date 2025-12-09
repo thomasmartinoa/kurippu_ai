@@ -1,0 +1,819 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../data/models/models.dart';
+import '../../../shared/providers/providers.dart';
+
+class NoteEditorScreen extends ConsumerStatefulWidget {
+  final String? noteId;
+
+  const NoteEditorScreen({super.key, this.noteId});
+
+  @override
+  ConsumerState<NoteEditorScreen> createState() => _NoteEditorScreenState();
+}
+
+class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
+  late TextEditingController _titleController;
+  late TextEditingController _contentController;
+  Note? _note;
+  bool _isLoading = true;
+  bool _hasChanges = false;
+  bool _isSaving = false;
+  String? _selectedFolderId;
+  List<String> _selectedTags = [];
+  NotePriority _priority = NotePriority.normal;
+  bool _isFavorite = false;
+  bool _isPinned = false;
+  NoteType _noteType = NoteType.text;
+
+  // Text formatting state
+  bool _isBold = false;
+  bool _isItalic = false;
+  bool _isUnderline = false;
+  bool _isBulletList = false;
+  bool _isNumberedList = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController();
+    _contentController = TextEditingController();
+    _loadNote();
+  }
+
+  Future<void> _loadNote() async {
+    if (widget.noteId != null) {
+      final storageService = ref.read(storageServiceProvider);
+      _note = await storageService.getNoteById(widget.noteId!);
+      if (_note != null) {
+        _titleController.text = _note!.title;
+        _contentController.text = _note!.plainTextContent ?? _note!.content;
+        _selectedFolderId = _note!.folderId;
+        _selectedTags = List.from(_note!.tags);
+        _priority = _note!.priority;
+        _isFavorite = _note!.isFavorite;
+        _isPinned = _note!.isPinned;
+        _noteType = _note!.type;
+      }
+    }
+    setState(() => _isLoading = false);
+  }
+
+  void _onTextChanged() {
+    if (!_hasChanges) {
+      setState(() => _hasChanges = true);
+    }
+  }
+
+  Future<void> _saveNote() async {
+    if (_isSaving) return;
+
+    final title = _titleController.text.trim();
+    final content = _contentController.text.trim();
+
+    if (title.isEmpty && content.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot save empty note')),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      final now = DateTime.now();
+      final noteTitle = title.isEmpty 
+          ? (content.length > 30 ? '${content.substring(0, 30)}...' : content)
+          : title;
+
+      if (_note != null) {
+        // Update existing note
+        final updatedNote = Note(
+          id: _note!.id,
+          title: noteTitle,
+          content: content,
+          plainTextContent: content,
+          folderId: _selectedFolderId,
+          tags: _selectedTags,
+          type: _noteType,
+          priority: _priority,
+          isFavorite: _isFavorite,
+          isPinned: _isPinned,
+          isArchived: _note!.isArchived,
+          isDeleted: _note!.isDeleted,
+          createdAt: _note!.createdAt,
+          updatedAt: now,
+          deletedAt: _note!.deletedAt,
+        );
+        await ref.read(notesNotifierProvider.notifier).updateNote(updatedNote);
+      } else {
+        // Create new note
+        final newNote = Note(
+          id: '', // Will be generated
+          title: noteTitle,
+          content: content,
+          plainTextContent: content,
+          folderId: _selectedFolderId,
+          tags: _selectedTags,
+          type: _noteType,
+          priority: _priority,
+          isFavorite: _isFavorite,
+          isPinned: _isPinned,
+          createdAt: now,
+          updatedAt: now,
+        );
+        await ref.read(notesNotifierProvider.notifier).addNote(newNote);
+      }
+
+      setState(() {
+        _hasChanges = false;
+        _isSaving = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Note saved'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _isSaving = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save note: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteNote() async {
+    if (_note == null) {
+      context.pop();
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Note'),
+        content: const Text('Move this note to trash?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      await ref.read(notesNotifierProvider.notifier).moveToTrash(_note!.id);
+      context.pop();
+    }
+  }
+
+  Future<bool> _onWillPop() async {
+    if (!_hasChanges) return true;
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Unsaved Changes'),
+        content: const Text('Do you want to save your changes?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'discard'),
+            child: const Text('Discard'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'cancel'),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'save'),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == 'save') {
+      await _saveNote();
+      return true;
+    } else if (result == 'discard') {
+      return true;
+    }
+    return false;
+  }
+
+  void _showFolderPicker() async {
+    final folders = ref.read(foldersNotifierProvider);
+    
+    final selected = await showModalBottomSheet<String?>(
+      context: context,
+      builder: (context) => _FolderPickerSheet(
+        folders: folders,
+        selectedFolderId: _selectedFolderId,
+      ),
+    );
+
+    if (selected != null || selected == '') {
+      setState(() {
+        _selectedFolderId = selected?.isEmpty == true ? null : selected;
+        _hasChanges = true;
+      });
+    }
+  }
+
+  void _showTagPicker() async {
+    final tags = ref.read(tagsNotifierProvider);
+    
+    final selected = await showModalBottomSheet<List<String>?>(
+      context: context,
+      builder: (context) => _TagPickerSheet(
+        tags: tags,
+        selectedTags: _selectedTags,
+      ),
+    );
+
+    if (selected != null) {
+      setState(() {
+        _selectedTags = selected;
+        _hasChanges = true;
+      });
+    }
+  }
+
+  void _showPriorityPicker() async {
+    final selected = await showModalBottomSheet<NotePriority?>(
+      context: context,
+      builder: (context) => _PriorityPickerSheet(
+        selectedPriority: _priority,
+      ),
+    );
+
+    if (selected != null) {
+      setState(() {
+        _priority = selected;
+        _hasChanges = true;
+      });
+    }
+  }
+
+  void _showMoreOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(_isFavorite ? Icons.star : Icons.star_border),
+              title: Text(_isFavorite ? 'Remove from favorites' : 'Add to favorites'),
+              onTap: () {
+                setState(() {
+                  _isFavorite = !_isFavorite;
+                  _hasChanges = true;
+                });
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: Icon(_isPinned ? Icons.push_pin : Icons.push_pin_outlined),
+              title: Text(_isPinned ? 'Unpin note' : 'Pin note'),
+              onTap: () {
+                setState(() {
+                  _isPinned = !_isPinned;
+                  _hasChanges = true;
+                });
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Move to folder'),
+              onTap: () {
+                Navigator.pop(context);
+                _showFolderPicker();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.label_outline),
+              title: const Text('Add tags'),
+              onTap: () {
+                Navigator.pop(context);
+                _showTagPicker();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Set priority'),
+              onTap: () {
+                Navigator.pop(context);
+                _showPriorityPicker();
+              },
+            ),
+            if (_note != null) ...[
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text('Delete', style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _deleteNote();
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _contentController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    if (_isLoading) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return PopScope(
+      canPop: !_hasChanges,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        final shouldPop = await _onWillPop();
+        if (shouldPop && context.mounted) {
+          context.pop();
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.noteId == null ? 'New Note' : 'Edit Note'),
+          actions: [
+            if (_hasChanges)
+              IconButton(
+                icon: _isSaving 
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.check),
+                onPressed: _isSaving ? null : _saveNote,
+                tooltip: 'Save',
+              ),
+            IconButton(
+              icon: const Icon(Icons.more_vert),
+              onPressed: _showMoreOptions,
+              tooltip: 'More options',
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            // Status indicators
+            if (_selectedFolderId != null || _selectedTags.isNotEmpty || _priority != NotePriority.normal || _isFavorite || _isPinned)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      if (_isPinned)
+                        _buildChip(
+                          icon: Icons.push_pin,
+                          label: 'Pinned',
+                          color: colorScheme.primary,
+                        ),
+                      if (_isFavorite)
+                        _buildChip(
+                          icon: Icons.star,
+                          label: 'Favorite',
+                          color: Colors.amber,
+                        ),
+                      if (_priority != NotePriority.normal)
+                        _buildChip(
+                          icon: Icons.flag,
+                          label: _priority.name,
+                          color: _getPriorityColor(_priority),
+                        ),
+                      if (_selectedFolderId != null)
+                        Builder(
+                          builder: (context) {
+                            final folders = ref.watch(foldersNotifierProvider);
+                            final folder = folders.firstWhere(
+                              (f) => f.id == _selectedFolderId,
+                              orElse: () => Folder(id: '', name: 'Unknown', createdAt: DateTime.now(), updatedAt: DateTime.now()),
+                            );
+                            return _buildChip(
+                              icon: Icons.folder,
+                              label: folder.name,
+                              color: folder.color != null ? Color(folder.color!) : colorScheme.secondary,
+                            );
+                          },
+                        ),
+                      ...ref.watch(tagsNotifierProvider)
+                          .where((t) => _selectedTags.contains(t.id))
+                          .map((tag) => _buildChip(
+                                icon: Icons.label,
+                                label: tag.name,
+                                color: tag.color != null ? Color(tag.color!) : colorScheme.tertiary,
+                              )),
+                    ],
+                  ),
+                ),
+              ),
+
+            // Editor
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    // Title field
+                    TextField(
+                      controller: _titleController,
+                      onChanged: (_) => _onTextChanged(),
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      decoration: const InputDecoration(
+                        hintText: 'Title',
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      maxLines: null,
+                      textCapitalization: TextCapitalization.sentences,
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // Content field
+                    TextField(
+                      controller: _contentController,
+                      onChanged: (_) => _onTextChanged(),
+                      style: theme.textTheme.bodyLarge,
+                      decoration: const InputDecoration(
+                        hintText: 'Start writing...',
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      maxLines: null,
+                      minLines: 20,
+                      keyboardType: TextInputType.multiline,
+                      textCapitalization: TextCapitalization.sentences,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Formatting toolbar
+            Container(
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest,
+                border: Border(
+                  top: BorderSide(color: colorScheme.outlineVariant),
+                ),
+              ),
+              child: SafeArea(
+                top: false,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Row(
+                    children: [
+                      _buildFormatButton(
+                        icon: Icons.format_bold,
+                        isActive: _isBold,
+                        onPressed: () => setState(() => _isBold = !_isBold),
+                        tooltip: 'Bold',
+                      ),
+                      _buildFormatButton(
+                        icon: Icons.format_italic,
+                        isActive: _isItalic,
+                        onPressed: () => setState(() => _isItalic = !_isItalic),
+                        tooltip: 'Italic',
+                      ),
+                      _buildFormatButton(
+                        icon: Icons.format_underlined,
+                        isActive: _isUnderline,
+                        onPressed: () => setState(() => _isUnderline = !_isUnderline),
+                        tooltip: 'Underline',
+                      ),
+                      const VerticalDivider(width: 16),
+                      _buildFormatButton(
+                        icon: Icons.format_list_bulleted,
+                        isActive: _isBulletList,
+                        onPressed: () => setState(() {
+                          _isBulletList = !_isBulletList;
+                          if (_isBulletList) _isNumberedList = false;
+                        }),
+                        tooltip: 'Bullet list',
+                      ),
+                      _buildFormatButton(
+                        icon: Icons.format_list_numbered,
+                        isActive: _isNumberedList,
+                        onPressed: () => setState(() {
+                          _isNumberedList = !_isNumberedList;
+                          if (_isNumberedList) _isBulletList = false;
+                        }),
+                        tooltip: 'Numbered list',
+                      ),
+                      const VerticalDivider(width: 16),
+                      _buildFormatButton(
+                        icon: Icons.check_box_outlined,
+                        isActive: _noteType == NoteType.checklist,
+                        onPressed: () {
+                          setState(() {
+                            _noteType = _noteType == NoteType.checklist 
+                                ? NoteType.text 
+                                : NoteType.checklist;
+                            _hasChanges = true;
+                          });
+                        },
+                        tooltip: 'Checklist',
+                      ),
+                      _buildFormatButton(
+                        icon: Icons.image_outlined,
+                        isActive: false,
+                        onPressed: () {
+                          // TODO: Add image
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Image attachment coming soon')),
+                          );
+                        },
+                        tooltip: 'Add image',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChip({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Chip(
+        avatar: Icon(icon, size: 16, color: color),
+        label: Text(label),
+        labelStyle: TextStyle(fontSize: 12, color: color),
+        backgroundColor: color.withOpacity(0.1),
+        side: BorderSide.none,
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+      ),
+    );
+  }
+
+  Widget _buildFormatButton({
+    required IconData icon,
+    required bool isActive,
+    required VoidCallback onPressed,
+    required String tooltip,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return IconButton(
+      icon: Icon(
+        icon,
+        color: isActive ? colorScheme.primary : colorScheme.onSurfaceVariant,
+      ),
+      onPressed: onPressed,
+      tooltip: tooltip,
+      style: IconButton.styleFrom(
+        backgroundColor: isActive ? colorScheme.primaryContainer : null,
+      ),
+    );
+  }
+
+  Color _getPriorityColor(NotePriority priority) {
+    switch (priority) {
+      case NotePriority.low:
+        return Colors.blue;
+      case NotePriority.normal:
+        return Colors.grey;
+      case NotePriority.high:
+        return Colors.orange;
+      case NotePriority.urgent:
+        return Colors.red;
+    }
+  }
+}
+
+// Folder Picker Sheet
+class _FolderPickerSheet extends StatelessWidget {
+  final List<Folder> folders;
+  final String? selectedFolderId;
+
+  const _FolderPickerSheet({
+    required this.folders,
+    required this.selectedFolderId,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              'Select Folder',
+              style: theme.textTheme.titleLarge,
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.folder_off_outlined),
+            title: const Text('No folder'),
+            selected: selectedFolderId == null,
+            onTap: () => Navigator.pop(context, ''),
+          ),
+          ...folders.map((folder) => ListTile(
+                leading: Icon(
+                  Icons.folder,
+                  color: folder.color != null ? Color(folder.color!) : null,
+                ),
+                title: Text(folder.name),
+                selected: folder.id == selectedFolderId,
+                onTap: () => Navigator.pop(context, folder.id),
+              )),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+}
+
+// Tag Picker Sheet
+class _TagPickerSheet extends StatefulWidget {
+  final List<Tag> tags;
+  final List<String> selectedTags;
+
+  const _TagPickerSheet({
+    required this.tags,
+    required this.selectedTags,
+  });
+
+  @override
+  State<_TagPickerSheet> createState() => _TagPickerSheetState();
+}
+
+class _TagPickerSheetState extends State<_TagPickerSheet> {
+  late List<String> _selected;
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = List.from(widget.selectedTags);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Select Tags', style: theme.textTheme.titleLarge),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, _selected),
+                  child: const Text('Done'),
+                ),
+              ],
+            ),
+          ),
+          if (widget.tags.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No tags created yet'),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: widget.tags.map((tag) {
+                final isSelected = _selected.contains(tag.id);
+                return FilterChip(
+                  label: Text(tag.name),
+                  selected: isSelected,
+                  onSelected: (selected) {
+                    setState(() {
+                      if (selected) {
+                        _selected.add(tag.id);
+                      } else {
+                        _selected.remove(tag.id);
+                      }
+                    });
+                  },
+                  avatar: Icon(
+                    Icons.label,
+                    size: 16,
+                    color: tag.color != null ? Color(tag.color!) : null,
+                  ),
+                );
+              }).toList(),
+            ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+}
+
+// Priority Picker Sheet
+class _PriorityPickerSheet extends StatelessWidget {
+  final NotePriority selectedPriority;
+
+  const _PriorityPickerSheet({required this.selectedPriority});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('Set Priority', style: theme.textTheme.titleLarge),
+          ),
+          ...NotePriority.values.map((priority) => ListTile(
+                leading: Icon(
+                  Icons.flag,
+                  color: _getPriorityColor(priority),
+                ),
+                title: Text(_getPriorityLabel(priority)),
+                selected: priority == selectedPriority,
+                onTap: () => Navigator.pop(context, priority),
+              )),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  Color _getPriorityColor(NotePriority priority) {
+    switch (priority) {
+      case NotePriority.low:
+        return Colors.blue;
+      case NotePriority.normal:
+        return Colors.grey;
+      case NotePriority.high:
+        return Colors.orange;
+      case NotePriority.urgent:
+        return Colors.red;
+    }
+  }
+
+  String _getPriorityLabel(NotePriority priority) {
+    switch (priority) {
+      case NotePriority.low:
+        return 'Low';
+      case NotePriority.normal:
+        return 'Normal';
+      case NotePriority.high:
+        return 'High';
+      case NotePriority.urgent:
+        return 'Urgent';
+    }
+  }
+}
