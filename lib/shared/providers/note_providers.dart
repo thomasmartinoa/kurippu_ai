@@ -97,6 +97,33 @@ class NotesNotifier extends StateNotifier<AsyncValue<List<Note>>> {
     return note;
   }
 
+  /// Alias for createNote that accepts a Note object directly
+  Future<void> addNote(Note note) async {
+    if (note.id.isEmpty) {
+      note.id = _uuid.v4();
+    }
+    await _storageService.saveNote(note);
+    await loadNotes();
+  }
+
+  /// Move note to trash
+  Future<void> moveToTrash(String noteId) async {
+    await _storageService.softDeleteNote(noteId);
+    await loadNotes();
+  }
+
+  /// Restore note from trash
+  Future<void> restoreFromTrash(String noteId) async {
+    await _storageService.restoreNote(noteId);
+    await loadNotes();
+  }
+
+  /// Permanently delete a note
+  Future<void> permanentlyDelete(String noteId) async {
+    await _storageService.permanentlyDeleteNote(noteId);
+    await loadNotes();
+  }
+
   Future<void> updateNote(Note note) async {
     note.updatedAt = DateTime.now();
     await _storageService.saveNote(note);
@@ -247,6 +274,15 @@ class FoldersNotifier extends StateNotifier<AsyncValue<List<Folder>>> {
     return folder;
   }
 
+  /// Alias for createFolder that accepts a Folder object directly
+  Future<void> addFolder(Folder folder) async {
+    if (folder.id.isEmpty) {
+      folder.id = _uuid.v4();
+    }
+    await _storageService.saveFolder(folder);
+    await loadFolders();
+  }
+
   Future<void> updateFolder(Folder folder) async {
     await _storageService.saveFolder(folder);
     await loadFolders();
@@ -351,3 +387,31 @@ class NoteStats {
     required this.favoriteNotes,
   });
 }
+
+// ============ Provider Aliases for UI Convenience ============
+
+/// Alias for notesProvider
+final notesNotifierProvider = notesProvider;
+
+/// Alias for foldersProvider
+final foldersNotifierProvider = foldersProvider;
+
+/// Alias for tagsProvider
+final tagsNotifierProvider = tagsProvider;
+
+/// Provider for filtered notes (synchronous access to notes data)
+final filteredNotesProvider = Provider<List<Note>>((ref) {
+  final notesAsync = ref.watch(notesProvider);
+  return notesAsync.when(
+    data: (notes) {
+      // Apply sorting: pinned first, then by date
+      final pinnedNotes = notes.where((n) => n.isPinned).toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final unpinnedNotes = notes.where((n) => !n.isPinned).toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return [...pinnedNotes, ...unpinnedNotes];
+    },
+    loading: () => [],
+    error: (_, __) => [],
+  );
+});

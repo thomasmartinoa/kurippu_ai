@@ -2,20 +2,48 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../features/home/home_screen.dart';
 import '../features/calendar/calendar_screen.dart';
 import '../features/recording/recording_screen.dart';
 import '../features/detail/meeting_detail_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/notes/screens/note_editor_screen.dart';
+import '../features/notes/screens/notes_list_screen.dart';
+import 'main_navigation.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/',
     routes: [
+      // Main navigation with bottom tabs
       GoRoute(
         path: '/',
+        name: 'main',
+        builder: (context, state) => const MainNavigationScreen(),
+      ),
+      // Legacy home route (redirects to main)
+      GoRoute(
+        path: '/home',
         name: 'home',
-        builder: (context, state) => const HomeScreen(),
+        redirect: (context, state) => '/',
+      ),
+      // Notes routes
+      GoRoute(
+        path: '/notes',
+        name: 'notes',
+        builder: (context, state) => const NotesListScreen(),
+      ),
+      GoRoute(
+        path: '/note/new',
+        name: 'new-note',
+        builder: (context, state) => const NoteEditorScreen(),
+      ),
+      GoRoute(
+        path: '/note/:noteId',
+        name: 'edit-note',
+        builder: (context, state) {
+          final noteId = state.pathParameters['noteId']!;
+          return NoteEditorScreen(noteId: noteId);
+        },
       ),
       GoRoute(
         path: '/calendar',
